@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Generique de fin de journee</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="composer" aria-label="Raconter la journee">
+        <div class="title-block">
+          <p class="kicker">Roll credits</p>
+          <h1>Generique de fin de journee</h1>
+          <p>
+            Raconte une journee banale. L'outil distribue les roles, trouve les
+            figurants, dramatise les details et transforme le tout en credits.
+          </p>
+        </div>
+
+        <label class="field-label" for="dayInput">Ce qu'il s'est passe</label>
+        <textarea id="dayInput" spellcheck="true">J'ai bu un cafe froid, rate le bus, repondu a trois mails, oublie d'acheter du pain, appele ma mere, perdu vingt minutes sur YouTube et range deux assiettes.</textarea>
+
+        <div class="controls">
+          <label>
+            Style
+            <select id="styleSelect">
+              <option value="cinema">Film d'auteur fatigue</option>
+              <option value="blockbuster">Blockbuster du rien</option>
+              <option value="arte">Documentaire Arte a 23h40</option>
+              <option value="thriller">Thriller administratif</option>
+              <option value="sitcom">Sitcom domestique</option>
+            </select>
+          </label>
+
+          <label>
+            Niveau de tragedie
+            <input id="dramaRange" type="range" min="1" max="5" value="3">
+          </label>
+
+          <button id="generateButton" type="button">Faire defiler</button>
+          <button id="copyButton" type="button">Copier</button>
+        </div>
+
+        <p id="extractionStatus" class="extraction-status" hidden></p>
+      </section>
+
+      <section class="credits-panel" aria-label="Generique genere">
+        <div class="screen">
+          <div id="creditsOutput" class="credits" aria-live="polite"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
