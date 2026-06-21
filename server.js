@@ -32,7 +32,23 @@ const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8"
+  ".json": "application/json; charset=utf-8",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".flac": "audio/flac",
+  ".webm": "audio/webm"
+};
+
+const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".webm"]);
+const MUSIC_FOLDERS_BY_STYLE = {
+  cinema: "film d'auteur",
+  blockbuster: "blockbuster",
+  arte: "arte",
+  thriller: "thriller",
+  sitcom: "sitcom"
 };
 
 function readBody(request) {
@@ -64,6 +80,32 @@ function sendStatus(response) {
     hasGeminiApiKey: Boolean(process.env.GEMINI_API_KEY),
     geminiApiKeyLength: process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.length : 0
   });
+}
+
+function toPublicMusicPath(styleFolder, fileName) {
+  return `/music/${encodeURIComponent(styleFolder)}/${encodeURIComponent(fileName)}`;
+}
+
+function listMusicForStyle(style) {
+  const folder = MUSIC_FOLDERS_BY_STYLE[style];
+  if (!folder) return [];
+
+  const musicPath = path.join(root, "music", folder);
+  if (!fs.existsSync(musicPath)) return [];
+
+  return fs.readdirSync(musicPath, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase()))
+    .map((entry) => ({
+      title: path.basename(entry.name, path.extname(entry.name)),
+      src: toPublicMusicPath(folder, entry.name)
+    }));
+}
+
+function sendMusicLibrary(response) {
+  const library = Object.fromEntries(
+    Object.keys(MUSIC_FOLDERS_BY_STYLE).map((style) => [style, listMusicForStyle(style)])
+  );
+  sendJson(response, 200, library);
 }
 
 const DRAMA_TONE_BY_LEVEL = {
@@ -410,6 +452,11 @@ function serveStatic(request, response) {
 const server = http.createServer((request, response) => {
   if (request.method === "GET" && request.url === "/api/status") {
     sendStatus(response);
+    return;
+  }
+
+  if (request.method === "GET" && request.url === "/api/music") {
+    sendMusicLibrary(response);
     return;
   }
 

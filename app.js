@@ -26,15 +26,25 @@ const STYLE_OPENERS = {
   ]
 };
 
+const setupPage = document.querySelector("#setupPage");
+const creditsPage = document.querySelector("#creditsPage");
 const input = document.querySelector("#dayInput");
 const styleSelect = document.querySelector("#styleSelect");
 const dramaRange = document.querySelector("#dramaRange");
 const output = document.querySelector("#creditsOutput");
 const generateButton = document.querySelector("#generateButton");
-const copyButton = document.querySelector("#copyButton");
 const statusBox = document.querySelector("#extractionStatus");
+const creditsMusic = new Audio();
+
+creditsMusic.loop = false;
+creditsMusic.volume = 0.42;
 
 let isGenerating = false;
+let hasRenderedCredits = false;
+let musicLibrary = {};
+let musicLibraryPromise = null;
+let lastTrackSrcByStyle = {};
+let preparedMusicTrack = null;
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => {
@@ -75,6 +85,132 @@ function setBusy(busy) {
   isGenerating = busy;
   generateButton.disabled = busy;
   generateButton.textContent = busy ? "Generation en cours..." : "Faire defiler";
+}
+
+function showSetupPage() {
+  setupPage.hidden = false;
+  creditsPage.hidden = true;
+  stopMusic();
+  output.classList.remove("paused", "rolling");
+}
+
+function showCreditsPage() {
+  setupPage.hidden = true;
+  creditsPage.hidden = false;
+}
+
+function pushCreditsHistory() {
+  if (window.location.hash !== "#credits") {
+    window.history.pushState({ page: "credits" }, "", "#credits");
+  }
+}
+
+async function loadMusicLibrary() {
+  try {
+    const response = await fetch("/api/music");
+    musicLibrary = response.ok ? await response.json() : {};
+  } catch {
+    musicLibrary = {};
+  }
+  return musicLibrary;
+}
+
+function ensureMusicLibrary() {
+  if (!musicLibraryPromise) musicLibraryPromise = loadMusicLibrary();
+  return musicLibraryPromise;
+}
+
+function pickRandomTrack(style) {
+  const tracks = Array.isArray(musicLibrary[style]) ? musicLibrary[style] : [];
+  if (!tracks.length) return null;
+
+  const availableTracks = tracks.length > 1
+    ? tracks.filter((track) => track.src !== lastTrackSrcByStyle[style])
+    : tracks;
+  const track = availableTracks[Math.floor(Math.random() * availableTracks.length)];
+  lastTrackSrcByStyle[style] = track.src;
+  return track;
+}
+
+function stopMusic() {
+  preparedMusicTrack = null;
+  creditsMusic.pause();
+  creditsMusic.removeAttribute("src");
+  creditsMusic.load();
+}
+
+function waitForMusicDuration() {
+  if (Number.isFinite(creditsMusic.duration) && creditsMusic.duration > 0) {
+    return Promise.resolve(creditsMusic.duration);
+  }
+
+  return new Promise((resolve) => {
+    const timeoutId = window.setTimeout(() => cleanup(30), 2500);
+
+    function cleanup(duration) {
+      window.clearTimeout(timeoutId);
+      creditsMusic.removeEventListener("loadedmetadata", handleMetadata);
+      creditsMusic.removeEventListener("error", handleError);
+      resolve(duration);
+    }
+
+    function handleMetadata() {
+      const duration = Number.isFinite(creditsMusic.duration) && creditsMusic.duration > 0
+        ? creditsMusic.duration
+        : 30;
+      cleanup(duration);
+    }
+
+    function handleError() {
+      cleanup(30);
+    }
+
+    creditsMusic.addEventListener("loadedmetadata", handleMetadata, { once: true });
+    creditsMusic.addEventListener("error", handleError, { once: true });
+    creditsMusic.load();
+  });
+}
+
+function prepareStyleMusic(style) {
+  const track = pickRandomTrack(style);
+  if (!track) {
+    stopMusic();
+    return null;
+  }
+
+  preparedMusicTrack = { ...track, style };
+  creditsMusic.src = track.src;
+  creditsMusic.currentTime = 0;
+  creditsMusic.load();
+  return preparedMusicTrack;
+}
+
+async function getPreparedMusicDuration(style) {
+  await ensureMusicLibrary();
+  const track = preparedMusicTrack?.style === style
+    ? preparedMusicTrack
+    : prepareStyleMusic(style);
+  if (!track) return 30;
+  return waitForMusicDuration();
+}
+
+async function playStyleMusic(style) {
+  await ensureMusicLibrary();
+  const track = preparedMusicTrack?.style === style
+    ? preparedMusicTrack
+    : pickRandomTrack(style);
+  preparedMusicTrack = null;
+
+  if (!track) {
+    stopMusic();
+    return;
+  }
+
+  if (creditsMusic.getAttribute("src") !== track.src) creditsMusic.src = track.src;
+  creditsMusic.currentTime = 0;
+  creditsMusic.play().catch(() => {
+    setStatus("info", "Musique prete. Si le navigateur la bloque, relance le generique.");
+  });
 }
 
 async function requestExtraction(text, dramaLevel) {
@@ -128,7 +264,7 @@ async function requestExtraction(text, dramaLevel) {
 }
 
 function renderEmptyState(message) {
-  output.classList.remove("paused");
+  output.classList.remove("paused", "rolling");
   output.innerHTML = "";
 
   const title = document.createElement("h2");
@@ -140,8 +276,25 @@ function renderEmptyState(message) {
   output.appendChild(p);
 }
 
+function startCreditsRoll(durationSeconds = 30) {
+  const screen = output.closest(".screen");
+  const screenHeight = screen ? screen.clientHeight : window.innerHeight;
+  const rollDuration = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 30;
+
+  output.classList.remove("rolling");
+  output.style.setProperty("--roll-duration", `${rollDuration}s`);
+  output.style.setProperty("--roll-start", `${screenHeight}px`);
+
+  window.requestAnimationFrame(() => {
+    const contentHeight = Math.max(output.scrollHeight, output.clientHeight);
+    output.style.setProperty("--roll-end", `${-contentHeight}px`);
+    output.classList.add("rolling");
+  });
+}
+
 function renderCreditsFromActors(actors, technicalCredits, finalLine, style) {
-  output.classList.remove("paused");
+  hasRenderedCredits = true;
+  output.classList.remove("paused", "rolling");
   output.innerHTML = "";
 
   const title = document.createElement("h2");
@@ -196,60 +349,67 @@ async function renderCredits() {
     return;
   }
 
+  stopMusic();
   setBusy(true);
   setStatus("info", "Generation en cours...");
-  renderEmptyState("Le generique se prepare...");
+  output.innerHTML = "";
+  await ensureMusicLibrary();
+  prepareStyleMusic(style);
 
   const result = await requestExtraction(text, dramaLevel);
 
   setBusy(false);
 
   if (!result.ok) {
+    stopMusic();
     setStatus("error", `IA indisponible: ${result.error}`);
     renderEmptyState("Le generique n'a pas pu etre genere. Verifie le badge ci-contre pour le detail de l'erreur.");
     return;
   }
 
+  const musicDuration = await getPreparedMusicDuration(style);
   setStatus("ok", `IA active (${result.actors.length} acteurs, ${result.technicalCredits.length} credits techniques).`);
+  showCreditsPage();
   renderCreditsFromActors(result.actors, result.technicalCredits, result.finalLine, style);
-}
-
-function copyCredits() {
-  const lines = [...output.querySelectorAll("h2, h3, p, .credit-line")].map((node) => {
-    if (node.classList.contains("credit-line")) {
-      const role = node.querySelector(".role").textContent;
-      const thing = node.querySelector(".thing").textContent;
-      return `${role}${".".repeat(Math.max(8, 62 - role.length))}${thing}`;
-    }
-
-    return node.textContent;
-  });
-
-  const text = lines.join("\n");
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(text);
-  } else {
-    const fallback = document.createElement("textarea");
-    fallback.value = text;
-    document.body.appendChild(fallback);
-    fallback.select();
-    document.execCommand("copy");
-    fallback.remove();
-  }
-
-  output.classList.add("paused");
-  copyButton.textContent = "Copie";
-  window.setTimeout(() => {
-    copyButton.textContent = "Copier";
-  }, 1200);
+  pushCreditsHistory();
+  startCreditsRoll(musicDuration);
+  await playStyleMusic(style);
 }
 
 generateButton.addEventListener("click", () => {
   renderCredits();
 });
-copyButton.addEventListener("click", copyCredits);
 input.addEventListener("input", () => {
+  hasRenderedCredits = false;
   output.classList.add("paused");
 });
 
-renderEmptyState("Ecris ta journee a gauche, puis clique sur \"Faire defiler\".");
+styleSelect.addEventListener("change", () => {
+  stopMusic();
+});
+
+window.addEventListener("resize", () => {
+  if (output.classList.contains("rolling")) {
+    const duration = Number.parseFloat(output.style.getPropertyValue("--roll-duration")) || 30;
+    startCreditsRoll(duration);
+  }
+});
+
+window.addEventListener("popstate", () => {
+  if (window.location.hash === "#credits" && hasRenderedCredits) {
+    showCreditsPage();
+  } else {
+    showSetupPage();
+  }
+});
+
+output.addEventListener("animationend", (event) => {
+  if (event.animationName === "roll") stopMusic();
+});
+
+if (window.location.hash === "#credits") {
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+}
+
+ensureMusicLibrary();
+showSetupPage();
